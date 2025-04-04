@@ -1,0 +1,108 @@
+* TSO COMMAND PROCESSOR TO WIPE TSB PASSWORDS FROM ALL LOGGED ON USERS.
+         YREGS
+TESTSRB  CSECT
+TESTSRB  RMODE 24
+TESTSRB  AMODE 31
+         STM   R14,R12,12(R13)
+         LR    R3,R15
+         USING TESTSRB,R3
+         LR    R14,R13
+         LA    R13,SAVEAREA
+         ST    R14,SAVEAREA+4
+* ------------------------------------------------------------------- *
+         TESTAUTH FCTN=1             Are we authorized?
+         LTR   R15,R15               Test the return code.
+         BNZ   NOTAUTH               Not zero, tell not authorized.
+         B     GOMODE                GO ON WITH REGULAR PROCESSING.
+NOTAUTH  DS    0H
+         TPUT  =CL19'MUST RUN AUTHORIZED',19
+         B     ENDJOB
+GOMODE   DS    0H
+* ------------------------------------------------------------------- *
+         MODESET MODE=SUP,KEY=ZERO
+         LA    R0,TSUEND
+         STORAGE OBTAIN,                                               X
+               LENGTH=(R0),                                            X
+               ADDR=(R8),                                              X
+               SP=228
+         ST   R8,SRBPTR
+*
+*
+*
+         LR   R9,R0
+         LA   R6,PWIPE
+         LR   R7,R0
+         MVCL R8,R6                         MOVE TO CSA
+*******************************************************************
+* POINT TO ASVT
+*******************************************************************
+         L     R9,CVTPTR         POINT TO CVT  - X'10'
+         USING CVT,R9             MAP CVT
+         L     R9,CVTASVT        POINT TO ASVT
+         DROP  R9                TELL ASMBLR TO STOP USING R09 FOR CVT
+         USING ASVT,R9           MAP ASVT
+         LA    R5,ASVTENTY       POINT TO FIRST ENTRY IN TABLE
+         L     R8,ASVTMAXU       MAXIMUM NUMBER OF ADDRESS SPACES
+ASVTLOOP DS    0H
+         LR    R7,R5             SAVE ADDRESS IN R7 FOR LATER
+*
+        TM    0(R5),ASVTAVAL     IS THIS SLOT BEING USED?
+        BO    NEXTASCB           NO. GO TO NEXT ONE.
+        L     R7,0(,R7)
+        USING ASCB,R7
+        CLC   ASCBTSB,=F'0'      IS THERE A TSB IN THE ASCB?
+        BE    NEXTASCB           NO. WE'RE NOT A TSU. SKIP IT.
+        L     R9,ASCBASSB        YES. GO ON AND PROCESS THE SRB SETUP.
+        USING ASSB,R9
+        MVC   STOKEN,ASSBSTKN
+*
+         IEAMSCHD EPADDR=SRBPTR,                                       X
+               ENV=STOKEN,                                             X
+               TARGETSTOKEN=STOKEN,                                    X
+               PRIORITY=GLOBAL,                                        X
+               SYNCH=YES
+*
+NEXTASCB DS    0H
+         LA    R5,4(,R5)        POINT TO NEXT ENTRY IN ASVT
+         BCT   R8,ASVTLOOP       GO CHECK NEXT ASVT ENTRY
+         L     R7,SRBPTR
+         STORAGE RELEASE,ADDR=(R7),LENGTH=TSUEND,SP=228
+         MODESET MODE=PROB,KEY=NZERO
+ENDJOB   L     R13,4(,R13)
+         LM    R14,R12,12(R13)
+         BR    R14
+SRBPTR   DS    A
+STOKEN   DS    XL8
+SAVEAREA DS   18F
+******************************************************************
+*         SRB CODE                                               *
+******************************************************************
+PWIPE    DS    0D
+         DROP  R3
+         LR    R12,R15             LOAD ENTRY POINT INTO BASE REGISTER
+         USING PWIPE,R12           TELL THE ASSEMBLER R12 IS BASE
+RUNBLANK DS    0H
+         L     R3,X'224'           POINT TO ASCB
+         L     R3,X'3C'(,R3)       POINT TO TSB
+         CLC   X'58'(8,R3),ZERO8   CHECK IF FIELD IS ZEROES
+         BE    RETURN              IF SO, DON'T BLANK IT
+         CLI   X'58'(R3),X'40'     FIRST LETTER < X'40'?
+         BL    RETURN              UNPRINTABLE. DON'T CHANGE.
+         CLI   X'58'(R3),X'F9'     FIRST LETTER > X'F9'?
+         BH    RETURN              NO. DON'T REPLACE
+         CLI   X'59'(R3),X'40'     SECOND LETTER < X'40'?
+         BL    RETURN              UNPRINTABLE. DON'T CHANGE.
+         CLI   X'59'(R3),X'F9'     SECOND LETTER > X'F9'?
+         BH    RETURN              NO. DON'T REPLACE
+         MVC   X'58'(8,R3),BLANKS  BLANK THE TSB PASSWORD FIELD
+RETURN   DS    0H
+         BR    R14                 RETURN TO CALLER
+BLANKS   DC    CL8' '
+ZERO8    DC    XL8'00'
+         LTORG
+TSUEND   EQU   *-PWIPE
+         IHAASCB
+         IHAASSB
+         IHAASVT
+         CVT  LIST=YES,DSECT=YES
+         END

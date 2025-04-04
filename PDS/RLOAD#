@@ -1,0 +1,32 @@
+ -------------------------------------------------------
+         TURN ON BITS IN ACEE OF ADDRESS SPACE
+         OR IN THE UTOKEN OF THE ADDRESS SPACE
+                  F TURNS THESE OFF
+                  EXAMPLE:  RLOAD SF
+ -------------------------------------------------------
+        RLOAD  S   ACEESPEC
+        RLOAD  O   ACEEOPER
+        RLOAD  U   ACEEAUDT
+        RLOAD  K   ACEERACF
+        RLOAD  P   ACEEPRIV
+        RLOAD  A   ACEEALTR
+        RLOAD  C   ACEECNTL
+        RLOAD  D   ACEEUPDT
+        RLOAD  R   ACEEREAD
+        RLOAD  0   ACEENONE
+        RLOAD  N   ACEENPWR
+        RLOAD  G   ACEEGRPA
+        RLOAD  H   ACEEUATH
+        RLOAD  V   ACEEDASD
+        RLOAD  T   ACEETAPE
+        RLOAD  M   ACEETERM
+        RLOAD  I   ACEEROA
+        RLOAD  L   ACEELOGU
+        RLOAD  1   DEFINED USER FROM ACEE UTOKEN
+        RLOADA 1F  DEFINED USER FROM ACEE UTOKEN (IN RLOADA)
+        RLOAD  2   PRIVILEGED USER FROM ACEE UTOKEN
+        RLOAD  3   TRUSTED USER FROM ACEE UTOKEN
+        RLOAD  4   USER MARKED SURROGATE
+        RLOAD  5   USER MARKED SPECIAL IN UTOKEN
+        RLOAD  6   USER MARKED REMOTE IN UTOKEN
+ -------------------------------------------------------

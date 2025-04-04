@@ -1,0 +1,92 @@
+*   TSO COMMAND PROCESSOR TO SET THE LWASPASS BIT FOR LOGGED ON USERS.
+         YREGS
+TESTSRB  CSECT
+TESTSRB  RMODE 24
+TESTSRB  AMODE 31
+         STM   R14,R12,12(R13)
+         LR    R3,R15
+         USING TESTSRB,R3
+         LR    R14,R13
+         LA    R13,SAVEAREA
+         ST    R14,SAVEAREA+4
+         MODESET MODE=SUP,KEY=ZERO
+         LA    R0,TSUEND
+         STORAGE OBTAIN,                                               X
+               LENGTH=(R0),                                            X
+               ADDR=(R8),                                              X
+               SP=228
+         ST   R8,SRBPTR
+*
+*
+*
+         LR   R9,R0
+         LA   R6,LWAPB
+         LR   R7,R0
+         MVCL R8,R6                         MOVE TO CSA
+*******************************************************************
+* POINT TO ASVT
+*******************************************************************
+         L     R9,CVTPTR         POINT TO CVT  - X'10'
+         USING CVT,R9             MAP CVT
+         L     R9,CVTASVT        POINT TO ASVT
+         DROP  R9                TELL ASMBLR TO STOP USING R09 FOR CVT
+         USING ASVT,R9           MAP ASVT
+         LA    R5,ASVTENTY       POINT TO FIRST ENTRY IN TABLE
+         L     R4,ASVTMAXU
+ASVTLOOP DS    0H             RUN THE SRB CODE FOR ALL ELIGIBLE ASIDS.
+         LR    R7,R5             SAVE ADDRESS IN R7 FOR LATER
+*
+         TM    0(R5),ASVTAVAL    X'80' BIT ON IN ASVT ENTRY?
+         BO    NEXTASCB          YES. ASID NOT AVAILABLE.
+         L     R7,0(,R7)         ASID AVAILABLE. GET ITS ASCB.
+         USING ASCB,R7
+         CLC   ASCBTSB,=F'0'     IS THERE A TSB, THIS IS A TSU?
+         BE    NEXTASCB          NO. NOT A TSU. TRY AGAIN.
+         L     R9,ASCBASSB       GET THE ASSB,
+         USING ASSB,R9
+         MVC   STOKEN,ASSBSTKN   AND THE STOKEN, FOR THE SCHEDULE.
+* ------------------------------------------------------------------- *
+*                 RUN THE SRB CODE IN TARGET ADDRSPC.                 *
+* ------------------------------------------------------------------- *
+         IEAMSCHD EPADDR=SRBPTR,                                       X
+               ENV=STOKEN,                                             X
+               TARGETSTOKEN=STOKEN,                                    X
+               PRIORITY=GLOBAL,                                        X
+               SYNCH=YES
+* ------------------------------------------------------------------- *
+*                                THERE IS NO OUTPUT FROM THIS PROGRAM.
+NEXTASCB DS    0H                SO DO THE STUFF FOR THE NEXT ASID.
+         LA    R5,4(,R5)         POINT TO NEXT ENTRY IN ASVT
+         BCT   R4,ASVTLOOP       GO CHECK NEXT ASVT ENTRY
+         L     R7,SRBPTR
+         STORAGE RELEASE,ADDR=(R7),LENGTH=TSUEND,SP=228
+         MODESET MODE=PROB,KEY=NZERO
+         L     R13,4(,R13)
+         LM    R14,R12,12(R13)
+         BR    R14
+SRBPTR   DS    A
+STOKEN   DS    XL8
+SAVEAREA DS    18F
+         LTORG
+         DROP  R3
+******************************************************************
+*         SRB CODE                                               *
+******************************************************************
+LWAPB    DS    0D
+         LR    R12,R15             LOAD ENTRY POINT INTO BASE REGISTER
+         USING LWAPB,R12           TELL THE ASSEMBLER R12 IS BASE
+RUNBLANK DS    0H
+         L     R3,X'224'           POINT TO ASCB
+         L     R3,X'6C'(,R3)       POINT TO ASXB
+         L     R3,X'14'(,R3)       POINT TO LWA
+         OI    X'42'(R3),X'10'     TURN ON LWASPASS
+RETURN   DS    0H
+         BR    R14                 RETURN TO CALLER
+BLANKS   DC    CL8' '
+         LTORG
+TSUEND   EQU   *-LWAPB
+         IHAASCB
+         IHAASSB
+         IHAASVT
+         CVT  LIST=YES,DSECT=YES
+         END

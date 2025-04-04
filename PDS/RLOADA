@@ -1,0 +1,459 @@
+* TSO COMMAND PROCESSOR, TO CHANGE ACEE-RELATED BITS.
+* SEE HELP FOR RLOAD, EXCEPT THAT OPCODE 1 WORKS OPPOSITE IN THIS PGM:
+*    1F TURNS THE OPTION ON, AND 1 TURNS THE OPTION OFF.
+* ------------------------------------------------------------------- *
+*                T A B L E   O F   O P C O D E S                      *
+*                      FOR YOUR REFERENCE                             *
+* ------------------------------------------------------------------- *
+*              ( SEE  MACROS:  IHAACEE  ICHRUTKN )
+*  S   ACEESPEC
+*  O   ACEEOPER
+*  U   ACEEAUDT
+*  K   ACEERACF
+*  P   ACEEPRIV
+*  A   ACEEALTR  F TURNS THESE OFF.  EXAMPLES:  SF  OF  2F
+*  C   ACEECNTL
+*  D   ACEEUPDT
+*  R   ACEEREAD
+*  0   ACEENONE
+*  N   ACEENPWR
+*  G   ACEEGRPA
+*  H   ACEEUATH
+*  V   ACEEDASD
+*  T   ACEETAPE
+*  M   ACEETERM
+*  I   ACEEROA
+*  L   ACEELOGU
+*  1   TOKUDUS   DEFINED USER FROM ACEE UTOKEN -
+*                (ALLOWS ONE TO SUBMIT JOBS WITH ID, AND NOT ++++++++)
+*                (WORKS OPPOSITE TO THE OTHER OPCODES)
+*                1F TURNS THE OPTION ON
+*                1  TURNS THE OPTION OFF
+*  2   TOKPRIV   PRIVILEGED USER FROM ACEE UTOKEN
+*  3   TOKTRST   TRUSTED USER FROM ACEE UTOKEN
+*  4   TOKSUS    USER MARKED SURROGATE
+*  5   TOKRSPEC  USER MARKED SPECIAL IN UTOKEN
+*  6   TOKREMOT  USER MARKED REMOTE IN UTOKEN
+* ------------------------------------------------------------------- *
+         YREGS
+* ------------------------------------------------------------------- *
+*                   MACRO TO DISPLAY HEX NUMBERS                      *
+* ------------------------------------------------------------------- *
+         MACRO
+&NAME    HEX   &TO,&LEN,&FROM
+&NAME    STM   R15,R1,HEXSAVE        Save work registers.
+         LA    R1,&FROM              Load from address.
+         LA    R0,&LEN               Load length of hex number.
+         LA    R15,&TO               Load to address.
+         BAL   R6,HEX                BAL to routine.
+         LM    R15,R1,HEXSAVE        Restore work registers.
+         MEND
+* ------------------------------------------------------------------- *
+*                     BEGIN THE PROGRAM PROPER                        *
+* ------------------------------------------------------------------- *
+TESTSRB  CSECT
+TESTSRB  RMODE 24
+TESTSRB  AMODE 31
+         STM   R14,R12,12(R13)       Program entry, not re-entrant.
+         LR    R3,R15
+         USING TESTSRB,R3
+         B     START
+         DC    C'RLOADA  &SYSDATE  &SYSTIME '
+         DC    C'This program is in the public domain. '
+START    STM   R14,R12,12(R13)       Program entry, not re-entrant.
+         LR    R14,R13
+         LA    R13,SAVEAREA
+         ST    R14,SAVEAREA+4
+* ------------------------------------------------------------------- *
+*                    CHECK FOR APF AUTHORIZATION                      *
+* ------------------------------------------------------------------- *
+         TESTAUTH FCTN=1             Are we authorized?
+         LTR   R15,R15               Test the return code.
+         BNZ   NOTAUTH               Not zero, tell not authorized.
+         B     INITCON               Go on with regular processing.
+NOTAUTH  DS    0H
+         TPUT  =CL19'MUST RUN AUTHORIZED',19
+         B     ENDJOB
+* ------------------------------------------------------------------- *
+*              I N I T I A L I Z E   C O N S T A N T S                *
+* ------------------------------------------------------------------- *
+INITCON  DS    0H                    Make the prgram reusable
+         MVI   ERRFLAG,X'00'
+         MVI   OFFFLAG,X'00'
+         MVI   TOKFLAG,X'00'
+         MVI   ACEEFLG,X'00'
+         MVI   NEQFLAG,X'01'         Default to "invalid TSO userid"
+         MVC   ASIDX0,=XL4'00'
+         MVC   ASIDX,=CL4' '
+         MVC   ASIDY0,=XL4'00'
+         MVC   ASIDY,=CL4' '
+* ------------------------------------------------------------------- *
+*            First, we find out whether to flip on or off.            *
+* ------------------------------------------------------------------- *
+ASKOPER  DS    0H                    Get userid to plug in
+         TPUT  =C'Enter up to 2-character operand',31
+         TPUT  =C'Opcode 1 works opposite.',24
+         TGET  OPERA,2               Get it in
+         OC    OPERA(2),=CL2' '      Uppercase what we entered
+         MVC   OPERB(2),OPERA        Copy to a different place
+         TCLEARQ INPUT
+         CLI   OPERB+1,C'F'          Are we tuning bits off?
+*                                    (except for operand 1, where
+*                                    on means "off" and off means "on")
+         BNE   SETON                 No.
+         MVI   OFFFLAG,X'01'         Yes. Flag to set bits all off.
+* ------------------------------------------------------------------- *
+*    Now we have the operand, and whether we are turning on or off.   *
+* ------------------------------------------------------------------- *
+*   We inquire of the tables, to learn what to do, and how to do it.  *
+* ------------------------------------------------------------------- *
+SETON    DS    0H                    Figure out table entry to use
+         STM   R7,R9,SAVEUSER        Save work registers
+GETTBENT DS    0H                    Start evaluating the operands.
+         LA    R7,ACEETBL            Start with ACEE table
+         OI    ACEEFLG,X'01'         Show we're doing first table
+GETTBTRY CLI   0(R7),X'FF'           End of table?
+         BE    TRYTOK                Yes. Try UTOKEN table
+         CLC   0(1,R7),OPERB         Does our entry match?
+         BE    GETTBGOT              Yes. Send it to the SRB.
+         LA    R7,3(,R7)             No. Try the next entry.
+         B     GETTBTRY              And loop
+GETTBGOT DS    0H                    Got a match for the opcode
+         MVC   OPERND(1),OPERB       Copy it to the SRB
+         MVC   OPERDISP(1),2(R7)     Copy displacement to the SRB
+         MVC   OPERBIT(1),1(R7)      Copy the bit setting to SRB
+         MVC   OPEROFF(1),=X'FF'     If turning off, FF-bit
+         XC    OPEROFF(1),1(R7)      XOR FF with the bit
+         MVC   OFFFLAGX,OFFFLAG      Copy "off flag" to the SRB
+         B     GETTBEND              And get out of this routine
+TRYTOK   DS    0H
+         LA    R7,UTOKTBL            Point to UTOKEN table
+         NI    ACEEFLG,X'FE'         Show we're doing second table
+TOKLOOP  DS    0H
+         CLI   0(R7),X'EE'           At end of table?
+         BE    GETTBFIN              Yes. Tell we have wrong opcode
+         CLC   0(1,R7),OPERB         Did we find the opcode in table?
+         BE    TOKGOT                Yes. Send it to the SRB.
+         LA    R7,3(,R7)             No. Go to next entry.
+         B     TOKLOOP               And loop
+TOKGOT   DS    0H                    We found the entry in UTOKEN tbl
+         MVC   OPERND(1),OPERB       Move the opcode to SRB
+         MVC   OPERDISP(1),2(R7)     Move the displacement to SRB
+         MVC   OPERBIT(1),1(R7)      Copy the bit setting to SRB
+         MVC   OPEROFF(1),=X'FF'     If turning off, FF-bit
+         XC    OPEROFF(1),1(R7)      XOR FF with the bit
+         MVC   OFFFLAGX,OFFFLAG      Copy "off flag" to the SRB
+         B     GETTBEND              And get out of this routine
+GETTBFIN DS    0H
+         TPUT  =C'Invalid Operand entered',23
+         B     ENDJOB                No STORAGE RELEASE necessary.
+GETTBEND DS    0H                    End of routine
+         LM    R7,R9,SAVEUSER        Restore work registers.
+* ------------------------------------------------------------------- *
+*           Now we find out which ASID we should affect.              *
+* ------------------------------------------------------------------- *
+ASKASID  DS    0H                    What ASID should we alter?
+         TPUT  =C'Enter 4-digit ASID',18   Ask for ASID
+         TGET  ASIDX,4                     Get 4 characters
+         OC    ASIDX,=CL4' '               Uppercase them
+* ------------------------------------------------------------------- *
+*        Allow entry of fewer than 4 characters for the ASID          *
+* ------------------------------------------------------------------- *
+ASIDJUST DS    0H                    Allow entering shorter asid
+         ST    R4,SAVER4A            Save work register
+         STM   R10,R11,SAVE1011      Save work registers
+         LA    R11,4                 BCT loop
+         LA    R10,ASIDX             Point to entered ASID
+         LA    R4,ASIDY              Point to work copy of asid
+         CLI   3(R10),X'40'          Is the end a blank?
+         BE    ASIDLOOP              Yes. Slide entered asid.
+         CLI   3(R10),X'00'          Is the end zeroes?
+         BE    ASIDLOOP              Yes. Slide entered asid.
+         MVC   ASIDY(4),ASIDX        No sliding. Fill ASID work copy.
+         B     ASIDEND
+ASIDLOOP DS    0H
+         CLI   3(R10),X'40'          Is the end a blank?
+         BE    ASIDPROC              Yes. Slide entered asid.
+         CLI   3(R10),X'00'          Is the end zeroes?
+         BE    ASIDPROC              Yes. Slide entered asid.
+         B     ASIDEND               No. Keep asid as is.
+ASIDPROC DS    0H
+         MVC   1(3,R4),0(R10)        Slide forward one place.
+*                                    We keep zeroes behind the ASID's
+         BCTR  R10,0                 Point to character before.
+         BCT   R11,ASIDLOOP          Try last character again.
+ASIDEND  DS    0H
+         MVC   ASIDX(4),ASIDY        Copy work back to original.
+         OC    ASIDX,=CL4' '         Uppercase for validity check
+         LM    R10,R11,SAVE1011      Restore work registers
+         L     R4,SAVER4A            Restore work register
+* ------------------------------------------------------------------- *
+         MVC   OUTPUT,OUTPUT-1       Clear output line
+         MVC   OUTPUT(28),MESSAG1    Write message to show
+         MVC   OUTPUT+28(4),ASIDX     characters entered
+         TPUT  OUTPUT,32
+         TR    ASIDX(4),ASIDVAL      Translate display format message
+*                                      into format X'0h0h0h0h'.
+* ------------------------------------------------------------------- *
+*->                   ASID Validation Routine                         *
+* ------------------------------------------------------------------- *
+         STM   R10,R11,SAVEVAL       Save work registers
+         SR    R10,R10
+         LA    R10,ASIDX             Point to translated ASID
+         LA    R11,3                 Load for BCT loop
+VALLOOP  DS    0H
+         CLI   0(R10),X'CC'          Did we translate to "invalid"?
+         BE    VALERR                Yes. Flag that a char is bad.
+         LA    R10,1(,R10)           Bump and
+         BCT   R11,VALLOOP             try next char.
+         B     VALEND
+VALERR   DS    0H
+         OI    ERRFLAG,X'01'         At least one char bad. Stop action
+VALEND   LM    R10,R11,SAVEVAL       Restore work registers.
+* ------------------------------------------------------------------- *
+         TM    ERRFLAG,X'01'         Invalid chars? Abort the command.
+         BZ    PACKASID              ASID chars valid, go on.
+         TPUT  MESSAG4,L'MESSAG4     NOT, print ASID invalid msg
+         B     ENDJOB                And get out
+* ------------------------------------------------------------------- *
+*                     Process the entered ASID                        *
+* ------------------------------------------------------------------- *
+PACKASID DS    0H
+         PACK  ASIDGET(3),ASIDX(5)   Get rid of all zone nibbles.
+         MVC   OUTPUT,OUTPUT-1       Clear output line
+         MVC   OUTPUT(28),MESSAG2    Write message to show
+         HEX   OUTPUT+28,2,ASIDBIN   ASID that is being used
+         TPUT  OUTPUT,32             Display message of ASID used.
+* ------------------------------------------------------------------- *
+*          Begin preparation of SRB - Move its code to CSA            *
+*                   APF-Authorized from here, out.                    *
+* ------------------------------------------------------------------- *
+         MODESET MODE=SUP,KEY=ZERO
+         LA    R0,TSUEND
+         STORAGE OBTAIN,                                               X
+               LENGTH=(R0),                                            X
+               ADDR=(R8),                                              X
+               SP=228
+         ST   R8,SRBPTR
+*
+*
+*
+         LR   R9,R0
+         LA   R6,RLOADA
+         LR   R7,R0
+         MVCL R8,R6                         MOVE TO CSA
+* ------------------------------------------------------------------- *
+*                      Cycle through the ASVT                         *
+* ------------------------------------------------------------------- *
+         L     R9,CVTPTR         POINT TO CVT  - X'10'
+         USING CVT,R9             MAP CVT
+         L     R9,CVTASVT        POINT TO ASVT
+         DROP  R9                TELL ASMBLR TO STOP USING R09 FOR CVT
+         USING ASVT,R9           MAP ASVT
+         LA    R5,ASVTENTY       POINT TO FIRST ENTRY IN TABLE
+         L     R8,ASVTMAXU       Load max number of ASID's
+         CH    R8,ASIDBIN        Is ours too big ?
+         BNL   ASVTLOOP          No. Go on processing.
+         TPUT  MESSAG3,L'MESSAG3   Yes. Message and out.
+         B     ENDFREE             Remember to clean up.
+* ------------------------------------------------------------------- *
+*     Check for logged on TSO users, then for the one we want.        *
+* ------------------------------------------------------------------- *
+ASVTLOOP DS    0H                Go loop through all the ASID's
+         LR    R7,R5             SAVE ADDRESS IN R7 FOR LATER
+*
+         TM    0(R5),ASVTAVAL    Is this address space being used?
+         BO    NEXTASCB          No. Go try next one.
+         L     R7,0(,R7)         Yes. Look at its ASCB.
+         USING ASCB,R7
+         CLC   ASCBTSB,=F'0'     Does it have a TSB?
+         BE    NEXTASCB          Zero. So it's not a TSU.
+         LH    R6,ASIDBIN        TSB there. So what ASID did we enter?
+         CH    R6,ASCBASID       Compare it with the current ASID?
+         BNE   NEXTASCB          Not equal. Don't do anything here.
+* ------------------------------------------------------------------- *
+*             We found the ASID that we want to change                *
+* ------------------------------------------------------------------- *
+*
+         MVI   NEQFLAG,X'00'     Entered ASID matches logged on user
+         L     R9,ASCBASSB       This is the one we want. Go there.
+         USING ASSB,R9
+         MVC   STOKEN,ASSBSTKN   Get the STOKEN for the schedule.
+*
+* ------------------------------------------------------------------- *
+*                     Now schedule the SRB                            *
+* ------------------------------------------------------------------- *
+         IEAMSCHD EPADDR=SRBPTR,                                       X
+               ENV=STOKEN,                                             X
+               TARGETSTOKEN=STOKEN,                                    X
+               PRIORITY=GLOBAL,                                        X
+               SYNCH=YES
+* ------------------------------------------------------------------- *
+NEXTASCB DS    0H                Go to next entry in the ASVT
+         LA    R5,4(,R5)
+         BCT   R8,ASVTLOOP       Loop as many times as ASVT entries
+* ------------------------------------------------------------------- *
+*                     E N D   O F   J O B                             *
+* ------------------------------------------------------------------- *
+ENDFREE  DS    0H
+         TM    NEQFLAG,X'01'     Did we find an ASID that qualifies?
+         BZ    ENDGOOD           Yes. We don't have to say an error.
+         CLC   OUTPUT,OUTPUT-1   Clear output area
+         MVC   OUTPUT(L'MESSAG5),MESSAG5  Move ASID not found message
+         TPUT  OUTPUT,L'MESSAG5
+ENDGOOD  DS    0H
+         L     R7,SRBPTR         Release SRB storage in common
+         STORAGE RELEASE,ADDR=(R7),LENGTH=TSUEND,SP=228
+         MODESET MODE=PROB,KEY=NZERO
+ENDJOB   L     R13,4(,R13)       Finish program execution
+         LM    R14,R12,12(R13)
+         BR    R14
+* ------------------------------------------------------------------- *
+*                       C O N S T A N T S                             *
+* ------------------------------------------------------------------- *
+SRBPTR   DS    A
+STOKEN   DS    XL8
+SAVEAREA DS    18F
+HEXSAVE  DS    3F                  SAVE FOR HEX MACRO
+SAVEVAL  DS    3F                  SAVE FOR VALIDITY ROUTINE
+SAVEUSER DS    3F                  SAVE FOR USER MOVE ROUTINE
+SAVER4A  DS    F
+SAVE1011 DS    2F
+OPERAL   DC    XL1'00'
+OPERA    DC    CL2' '
+OPERB    DC    CL2' '
+ASIDX0   DC    XL4'00'             MUST BE JUST BEFORE ASIDX
+ASIDX    DC    CL4' '
+ASIDY0   DC    XL4'00'             MUST BE JUST BEFORE ASIDY
+ASIDY    DC    CL4' '
+         DS    0F
+ASIDBIN  DS    0XL2
+ASIDGET  DC    XL4'00000000'
+FILLER1  DC    XL4'00000000'
+ERRFLAG  DC    X'00'
+OFFFLAG  DC    X'00'
+TOKFLAG  DC    X'00'
+NEQFLAG  DC    X'00'       X'01' - ASID IS NOT A LOGGED ON TSO USERID
+ASIDVAL  DS    0D
+         DC    XL16'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'00CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CC0A0B0C0D0E0FCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CC0A0B0C0D0E0FCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         DC    XL16'00010203040506070809CCCCCCCCCCCC'
+FILLER2  DC    CL24' '
+MESSAG1  DC    CL28'Address space you entered:  '
+MESSAG2  DC    CL28'Address space being used :  '
+MESSAG3  DC    CL28'Entered address space high. '
+MESSAG4  DC    CL28'An invalid ASID was entered.'
+MESSAG5  DC    CL38'This ASID is not an active TSO userid.'
+         DC    X'40'
+OUTPUT   DC    CL80' '
+ACEETBL  DC    C'S',X'80',X'00'     ACEESPEC
+         DC    C'O',X'20',X'00'     ACEEOPER
+         DC    C'U',X'10',X'00'     ACEEAUDT
+         DC    C'L',X'08',X'00'     ACEELOGU
+         DC    C'I',X'04',X'00'     ACEEROA
+         DC    C'P',X'02',X'00'     ACEEPRIV
+         DC    C'K',X'01',X'00'     ACEERACF
+         DC    C'A',X'80',X'01'     ACEEALTR
+         DC    C'C',X'40',X'01'     ACEECNTL
+         DC    C'D',X'20',X'01'     ACEEUPDT
+         DC    C'R',X'10',X'01'     ACEEREAD
+         DC    C'0',X'01',X'01'     ACEENONE
+         DC    C'G',X'80',X'02'     ACEEGRPA
+         DC    C'N',X'01',X'02'     ACEENPWR
+         DC    C'H',X'20',X'12'     ACEEUATH
+         DC    C'V',X'08',X'12'     ACEEDASD
+         DC    C'T',X'04',X'12'     ACEETAPE
+         DC    C'M',X'02',X'12'     ACEETERM
+         DC    X'FFFFFF'
+UTOKTBL  DC    C'2',X'01',X'04'     TOKPRIV
+         DC    C'3',X'08',X'04'     TOKTRST
+         DC    C'4',X'04',X'04'     TOKSUS
+         DC    C'5',X'02',X'02'     TOKRSPEC
+         DC    C'6',X'02',X'04'     TOKREMOT
+         DC    C'1',X'40',X'04'     TOKUDUD F turns on. Otherwise off
+         DC    X'EEEEEE'
+*
+         LTORG
+* ------------------------------------------------------------------- *
+*            H E X    D I S P L A Y    S U B R O U T I N E            *
+* ------------------------------------------------------------------- *
+HEX      DS    0H                  Display hex values.
+         ST    R6,SAVER6A
+         MVC   1(1,R15),0(R1)      Move byte.
+         UNPK  0(3,R15),1(2,R15)   Unpack.
+         TR    0(2,R15),HEXTAB-240
+         LA    R15,2(,R15)         Increment output pointer.
+         LA    R1,1(,R1)           Increment input pointer.
+         BCT   R0,HEX              Decrement length, then loop.
+         MVI   0(R15),C' '         Blank the trailing byte.
+         L     R6,SAVER6A
+         BR    R6                  Return to caller.
+HEXTAB   DC    C'0123456789ABCDEF' Translate table.
+SAVER10A DS    F
+SAVER6A  DS    F
+* ------------------------------------------------------------------- *
+*                         S R B   C O D E                             *
+* ------------------------------------------------------------------- *
+RLOADA   DS    0D
+         DROP  R3
+         LR    R12,R15             LOAD ENTRY POINT INTO BASE REGISTER
+         USING RLOADA,R12          TELL THE ASSEMBLER R12 IS BASE
+RUNBLANK DS    0H
+         L     R3,X'224'           POINT TO ASCB
+         L     R3,X'6C'(,R3)       POINT TO ASXB
+         L     R3,X'C8'(,R3)       POINT TO SENV
+         L     R4,X'A4'(,R3)       POINT TO UTOKEN
+         LA    R3,X'26'(,R3)       POINT TO FLG1
+         SR    R8,R8               CLEAR REGISTER
+         IC    R8,OPERDISP         GET DISPLACEMENT
+         AR    R3,R8               GO TO CORRECT LOCATION IF ACEE
+         AR    R4,R8               GO TO CORRECT LOCATION IF UTOKEN
+         TM    OFFFLAGX,X'01'      TURNING OFF?
+         BNZ   TURNOFF
+TURNON   DS    0H
+         TM    ACEEFLG,X'01'       Changing R3, ACEE?
+         BZ    TURNON4             No. Changing UTOKEN?
+         OC    0(1,R3),OPERBIT
+         B     RETURN
+TURNON4  DS    0H
+         OC    0(1,R4),OPERBIT
+         B     RETURN
+TURNOFF  DS    0H
+         TM    ACEEFLG,X'01'       Changing R3, ACEE?
+         BZ    TURNOFF4            No. Changing UTOKEN?
+         NC    0(1,R3),OPEROFF
+         B     RETURN
+TURNOFF4 DS    0H
+         NC    0(1,R4),OPEROFF
+RETURN   DS    0H
+         BR    R14                 RETURN TO CALLER
+OPERND   DC    CL1' '
+ACEEFLG  DC    XL1'00'
+OPERDISP DC    XL1'00'
+OPERBIT  DC    XL1'00'
+OPEROFF  DC    XL1'00'
+OFFFLAGX DC    XL1'00'
+OPERSRB  DC    CL1' '
+         LTORG
+TSUEND   EQU   *-RLOADA
+* ------------------------------------------------------------------- *
+*                       M  A  C  R  O  S                              *
+* ------------------------------------------------------------------- *
+         IHAASCB
+         IHAASSB
+         IHAASVT
+         CVT  LIST=YES,DSECT=YES
+         END
